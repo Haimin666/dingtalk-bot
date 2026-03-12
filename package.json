@@ -1,0 +1,10 @@
+{
+  "name": "dingtalk-bot",
+  "version": "0.1.0",
+  "description": "DingTalk robot service with AI integration",
+  "scripts": {
+    "dev": "uv run uvicorn main:app --host 0.0.0.0 --port 3030 --reload",
+    "start": "uv run uvicorn main:app --host 0.0.0.0 --port 3030",
+    "install-deps": "uv sync"
+  }
+}
