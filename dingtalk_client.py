@@ -36,9 +36,9 @@ class DingTalkMessage:
     conversation_id: str
     conversation_type: str  # "1" = single chat, "2" = group chat
     sender_id: str
-    sender_staff_id: str
-    sender_name: str
-    content: str
+    sender_staff_id: str = ""
+    sender_name: str = "User"
+    content: str = ""
     msg_type: str = "text"
     create_time: int = field(default_factory=lambda: int(time.time() * 1000))
     session_webhook: str = ""
@@ -208,25 +208,46 @@ class DingTalkStreamClient:
             logger.error(f'Failed to open connection: {e}')
             return None
     
-    def _parse_chatbot_message(self, data: dict) -> Optional[DingTalkMessage]:
+    def _parse_chatbot_message(self, data) -> Optional[DingTalkMessage]:
         """Parse chatbot message from DingTalk callback"""
         try:
+            # data 可能是字符串或字典
+            if isinstance(data, str):
+                logger.debug(f'Parsing string data: {data[:200]}...')
+                data = json.loads(data)
+            
+            if not isinstance(data, dict):
+                logger.error(f'Data is not dict: {type(data)}')
+                return None
+            
+            logger.info(f'Parsing message data: {json.dumps(data, ensure_ascii=False)[:500]}')
+            
             msg_type = data.get('msgtype', '')
             
             if msg_type == 'text':
                 text_content = data.get('text', {})
-                content = text_content.get('content', '')
+                if isinstance(text_content, str):
+                    text_content = json.loads(text_content) if text_content else {}
+                content = text_content.get('content', '') if isinstance(text_content, dict) else ''
             elif msg_type == 'richText':
                 # Parse rich text content
                 content_data = data.get('content', {})
-                rich_text_list = content_data.get('richText', [])
+                if isinstance(content_data, str):
+                    content_data = json.loads(content_data) if content_data else {}
+                rich_text_list = content_data.get('richText', []) if isinstance(content_data, dict) else []
                 content = ' '.join([
                     item.get('text', '') 
                     for item in rich_text_list 
-                    if 'text' in item
+                    if isinstance(item, dict) and 'text' in item
                 ])
             else:
-                content = data.get('content', {}).get('content', '')
+                content = data.get('content', '')
+                if isinstance(content, dict):
+                    content = content.get('content', '')
+                elif isinstance(content, str):
+                    pass
+                else:
+                    content = ''
             
             return DingTalkMessage(
                 msg_id=data.get('msgId', str(uuid.uuid4())),
@@ -235,7 +256,7 @@ class DingTalkStreamClient:
                 sender_id=data.get('senderId', ''),
                 sender_staff_id=data.get('senderStaffId', ''),
                 sender_name=data.get('senderNick', 'User'),
-                content=content.strip(),
+                content=content.strip() if content else '',
                 msg_type=msg_type or 'text',
                 create_time=data.get('createAt', int(time.time() * 1000)),
                 session_webhook=data.get('sessionWebhook', ''),
@@ -243,12 +264,15 @@ class DingTalkStreamClient:
                 raw_data=data,
             )
         except Exception as e:
-            logger.error(f'Error parsing message: {e}')
+            logger.error(f'Error parsing message: {e}', exc_info=True)
             return None
     
     async def _route_message(self, json_message: dict) -> Optional[str]:
         """Route incoming message to appropriate handler"""
         msg_type = json_message.get('type', '')
+        
+        logger.info(f'Received message type: {msg_type}')
+        logger.debug(f'Full message: {json.dumps(json_message, ensure_ascii=False)[:1000]}')
         
         if msg_type == 'SYSTEM':
             # System message (disconnect, etc.)
@@ -262,17 +286,21 @@ class DingTalkStreamClient:
         elif msg_type == 'CALLBACK':
             # Callback message (chatbot, etc.)
             topic = json_message.get('headers', {}).get('topic', '')
+            logger.info(f'Callback topic: {topic}')
             
             if topic == self.TOPIC_CHATBOT_MESSAGE:
                 # Chatbot message
                 data = json_message.get('data', {})
+                logger.info(f'Raw data type: {type(data)}')
+                logger.info(f'Raw data: {json.dumps(data, ensure_ascii=False)[:500] if isinstance(data, dict) else str(data)[:500]}')
+                
                 message = self._parse_chatbot_message(data)
                 
                 if message and self.on_message:
                     try:
                         await self.on_message(message)
                     except Exception as e:
-                        logger.error(f'Error in message handler: {e}')
+                        logger.error(f'Error in message handler: {e}', exc_info=True)
             else:
                 logger.warning(f"Unknown callback topic: {topic}")
         else:
