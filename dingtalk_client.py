@@ -220,10 +220,16 @@ class DingTalkStreamClient:
                 logger.error(f'Data is not dict: {type(data)}')
                 return None
             
-            logger.info(f'Parsing message data: {json.dumps(data, ensure_ascii=False)[:500]}')
+            logger.info(f'Parsing message data: {json.dumps(data, ensure_ascii=False)[:1000]}')
+            
+            # 提取sessionWebhook
+            session_webhook = data.get('sessionWebhook', '')
+            logger.info(f'sessionWebhook: {session_webhook[:100] if session_webhook else "NOT FOUND"}')
             
             msg_type = data.get('msgtype', '')
+            content = ''
             
+            # 根据不同的消息类型解析内容
             if msg_type == 'text':
                 text_content = data.get('text', {})
                 if isinstance(text_content, str):
@@ -241,6 +247,8 @@ class DingTalkStreamClient:
                     if isinstance(item, dict) and 'text' in item
                 ])
             else:
+                # 尝试多种方式获取内容
+                # 1. 直接获取content字段
                 content = data.get('content', '')
                 if isinstance(content, dict):
                     content = content.get('content', '')
@@ -248,6 +256,20 @@ class DingTalkStreamClient:
                     pass
                 else:
                     content = ''
+                
+                # 2. 如果content为空，尝试获取text.content
+                if not content:
+                    text_data = data.get('text', {})
+                    if isinstance(text_data, dict):
+                        content = text_data.get('content', '')
+                    elif isinstance(text_data, str):
+                        content = text_data
+                
+                # 3. 如果还是空的，记录警告
+                if not content:
+                    logger.warning(f'No content found in message, available keys: {list(data.keys())}')
+            
+            logger.info(f'Parsed content: {content[:100]}...' if content else 'Content is empty')
             
             return DingTalkMessage(
                 msg_id=data.get('msgId', str(uuid.uuid4())),
@@ -259,7 +281,7 @@ class DingTalkStreamClient:
                 content=content.strip() if content else '',
                 msg_type=msg_type or 'text',
                 create_time=data.get('createAt', int(time.time() * 1000)),
-                session_webhook=data.get('sessionWebhook', ''),
+                session_webhook=session_webhook,
                 session_webhook_expired_time=data.get('sessionWebhookExpiredTime', 0),
                 raw_data=data,
             )

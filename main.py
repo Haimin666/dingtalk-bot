@@ -184,12 +184,24 @@ async def handle_streaming_response(message: DingTalkMessage, session_id: str):
                 sender_staff_id=message.sender_staff_id,
             )
             logger.info(f"[StreamingCard] Completed streaming: {len(full_content)} chars")
+            
+            # 如果卡片发送失败，使用sessionWebhook发送文本消息
+            if not full_content:
+                logger.warning("[StreamingCard] Card may have failed, trying text fallback")
+                # 重新获取AI响应
+                response = await ai_service.chat(
+                    user_message=message.content,
+                    session_id=session_id,
+                    user_id=message.sender_id,
+                )
+                if message_sender:
+                    await message_sender.reply_text(message, response)
         else:
             # Fallback to normal response
             await handle_normal_response(message, session_id)
             
     except Exception as e:
-        logger.error(f"[StreamingCard] Error in streaming response: {e}")
+        logger.error(f"[StreamingCard] Error in streaming response: {e}", exc_info=True)
         # Fallback to normal response
         await handle_normal_response(message, session_id)
 
