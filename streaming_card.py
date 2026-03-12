@@ -92,6 +92,7 @@ class StreamingCardManager:
             result = response.json()
             self._access_token = result['accessToken']
             self._access_token_expire_time = now + result['expireIn'] - 300
+            logger.info(f"Got access token, expires in {result['expireIn']}s")
             return self._access_token
         except Exception as e:
             logger.error(f'Failed to get access token: {e}')
@@ -124,6 +125,7 @@ class StreamingCardManager:
                 result = await resp.json()
                 self._access_token = result['accessToken']
                 self._access_token_expire_time = now + result['expireIn'] - 300
+                logger.info(f"Got access token, expires in {result['expireIn']}s")
                 return self._access_token
         except Exception as e:
             logger.error(f'Failed to get access token: {e}')
@@ -194,6 +196,9 @@ class StreamingCardManager:
         # 生成卡片实例ID
         card_instance_id = str(uuid.uuid4())
         
+        logger.info(f"Creating card with template: {card_template_id}")
+        logger.info(f"Card data: {card_data}")
+        
         # Step 1: 创建卡片实例
         body = {
             "cardTemplateId": card_template_id,
@@ -205,15 +210,17 @@ class StreamingCardManager:
         }
         
         url = f"{DINGTALK_OPENAPI_ENDPOINT}/v1.0/card/instances"
+        logger.info(f"Creating card at: {url}")
         
         try:
             async with self._session.post(url, headers=headers, json=body) as resp:
+                resp_text = await resp.text()
+                logger.info(f"Create card response: {resp.status} - {resp_text[:500]}")
                 if resp.status != 200:
-                    text = await resp.text()
-                    logger.error(f"Failed to create card: {resp.status} - {text}")
+                    logger.error(f"Failed to create card: {resp.status} - {resp_text}")
                     return ""
         except Exception as e:
-            logger.error(f"Error creating card: {e}")
+            logger.error(f"Error creating card: {e}", exc_info=True)
             return ""
         
         # Step 2: 投放卡片
@@ -241,17 +248,21 @@ class StreamingCardManager:
             body["imRobotOpenDeliverModel"] = {"spaceType": "IM_ROBOT"}
         
         url = f"{DINGTALK_OPENAPI_ENDPOINT}/v1.0/card/instances/deliver"
+        logger.info(f"Delivering card at: {url}")
+        logger.info(f"Deliver body: {json.dumps(body, ensure_ascii=False)}")
         
         try:
             async with self._session.post(url, headers=headers, json=body) as resp:
+                resp_text = await resp.text()
+                logger.info(f"Deliver card response: {resp.status} - {resp_text[:500]}")
                 if resp.status != 200:
-                    text = await resp.text()
-                    logger.error(f"Failed to deliver card: {resp.status} - {text}")
+                    logger.error(f"Failed to deliver card: {resp.status} - {resp_text}")
                     return ""
                 
+                logger.info(f"Card delivered successfully: {card_instance_id}")
                 return card_instance_id
         except Exception as e:
-            logger.error(f"Error delivering card: {e}")
+            logger.error(f"Error delivering card: {e}", exc_info=True)
             return ""
     
     async def put_card_data(self, card_instance_id: str, card_data: dict):
@@ -276,6 +287,8 @@ class StreamingCardManager:
                 if resp.status != 200:
                     text = await resp.text()
                     logger.error(f"Failed to update card: {resp.status} - {text}")
+                else:
+                    logger.debug(f"Card updated: {card_instance_id}")
         except Exception as e:
             logger.error(f"Error updating card: {e}")
     
@@ -447,6 +460,8 @@ class StreamingCardManager:
         Returns:
             完整内容
         """
+        logger.info(f"send_and_stream called with conversation_id={open_conversation_id}, type={conversation_type}, sender={sender_staff_id}")
+        
         # 1. 创建AI卡片
         card_instance_id = await self.ai_card_start(
             conversation_id=open_conversation_id,
@@ -456,8 +471,10 @@ class StreamingCardManager:
         )
         
         if not card_instance_id:
-            logger.error("Failed to create AI card")
+            logger.error("Failed to create AI card, card_instance_id is empty")
             return ""
+        
+        logger.info(f"AI card created: {card_instance_id}")
         
         full_content = ""
         
@@ -482,9 +499,10 @@ class StreamingCardManager:
                 content=full_content,
                 title=title,
             )
+            logger.info(f"AI card finished with {len(full_content)} chars")
             
         except Exception as e:
-            logger.error(f"Error during streaming: {e}")
+            logger.error(f"Error during streaming: {e}", exc_info=True)
             await self.ai_card_fail(card_instance_id, title=title)
         
         return full_content
